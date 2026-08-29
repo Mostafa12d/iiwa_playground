@@ -1,5 +1,5 @@
 import numpy as np
-from dual_quaternions import DualQuaternion
+from .dual_quaternions import DualQuaternion
 
 
 class DualQuaternionTrajectory:

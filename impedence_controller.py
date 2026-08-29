@@ -2,8 +2,10 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 import time
-from dual_quat_traj import DualQuaternionTrajectory
-from dx_plot import plot_dx
+from utils.dual_quat_traj import DualQuaternionTrajectory
+from utils.dx_plot import plot_dx, plot_paths
+from utils.goal_sampler import sample_goal_poses
+from utils.traj_overlay import TrajectoryOverlay, hide_body_geoms
 
 # Cartesian impedance control gains.
 impedance_pos = np.asarray([10.0, 10.0, 10.0])  # [N/m]
@@ -32,6 +34,20 @@ gravity_compensation: bool = True
 
 # Simulation timestep in seconds.
 dt: float = 0.002
+
+# Goal sequence. Endpoints are sampled from the reachable workspace shell in
+# goal_sampler.py; each segment runs for segment_duration then holds for
+# settle_time so the impedance response can settle before the next goal.
+n_goals: int = 4
+goal_seed: int | None = 0
+segment_duration: float = 3.0
+settle_time: float = 1.0
+
+# Drive the mocap box along the commanded pose so the target is visible.
+drive_mocap: bool = True
+
+# Redraw the viewer overlay every N physics steps (~20 Hz at dt = 0.002).
+overlay_every: int = 25
 
 
 def main() -> None:
@@ -74,9 +90,11 @@ def main() -> None:
     key_id = model.key(key_name).id
     q0 = model.key(key_name).qpos
 
-    # Mocap body we will control with our mouse.
+    # Mocap body carrying the commanded pose. Its box is hidden; the site frame
+    # it holds is what shows the commanded pose travelling.
     mocap_name = "target"
     mocap_id = model.body(mocap_name).mocapid[0]
+    hide_body_geoms(model, mocap_name)
 
     # Pre-allocate numpy arrays.
     jac = np.zeros((6, model.nv))
@@ -104,49 +122,63 @@ def main() -> None:
         # Enable site frame visualization.
         viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
-        # Start pose of the end-effector site, as (w, x, y, z).
-        site_quat_at_start = np.zeros(4)
-        mujoco.mju_mat2Quat(site_quat_at_start, data.site(site_id).xmat)
+        # Goal endpoints, sampled from the reachable workspace shell.
+        goal_pos, goal_quat = sample_goal_poses(model, n_goals, seed=goal_seed)
 
-        traj = DualQuaternionTrajectory(
-            pos_start=data.site(site_id).xpos.copy(),
-            quat_start=site_quat_at_start,
-            pos_goal=np.array([0.5, 0.2, 0.4]),
-            quat_goal=np.array([0.707, 0, 0, 0.707]),
-            duration=3.0,
-        )
+        overlay = TrajectoryOverlay(viewer.user_scn)
+        overlay.set_goals(goal_pos)
 
-        t_elapsed = 0.0
-        is_mocap = False
+        def start_segment(index):
+            """Trajectory from wherever the end-effector is now to goal `index`."""
+            quat_now = np.zeros(4)
+            mujoco.mju_mat2Quat(quat_now, data.site(site_id).xmat)
+            segment = DualQuaternionTrajectory(
+                pos_start=data.site(site_id).xpos.copy(),
+                quat_start=quat_now,
+                pos_goal=goal_pos[index],
+                quat_goal=goal_quat[index],
+                duration=segment_duration,
+            )
+            overlay.set_commanded(segment)
+            overlay.active_goal = index
+            return segment
 
-        # Tracking-error log, plotted once the viewer closes.
+        segment_index = 0
+        traj = start_segment(segment_index)
+        t_seg = 0.0
+        t_sim = 0.0
+        step_count = 0
+
+        # Run log, written out once the viewer closes.
         log_t: list[float] = []
         log_dx: list[np.ndarray] = []
+        log_cmd: list[np.ndarray] = []
+        log_actual: list[np.ndarray] = []
+        log_segment: list[int] = []
+        segment_marks: list[tuple[float, str]] = [(0.0, "goal 1")]
 
         while viewer.is_running():
             step_start = time.time()
 
-            if is_mocap:
-                pos, quat = traj.sample(t_elapsed)
+            pos, quat = traj.sample(t_seg)
+            if drive_mocap:
                 data.mocap_pos[mocap_id] = pos
                 data.mocap_quat[mocap_id] = quat
-                dx = data.mocap_pos[mocap_id] - data.site(site_id).xpos
-            else:
-                pos, quat = traj.sample(t_elapsed)
 
-
+            site_pos = data.site(site_id).xpos.copy()
 
             # Spatial velocity (aka twist).
-            dx = pos - data.site(site_id).xpos
-            log_t.append(t_elapsed)
+            dx = pos - site_pos
+            log_t.append(t_sim)
             log_dx.append(dx.copy())
+            log_cmd.append(pos.copy())
+            log_actual.append(site_pos)
+            log_segment.append(segment_index)
+
             twist[:3] = Kpos * dx / integration_dt
             mujoco.mju_mat2Quat(site_quat, data.site(site_id).xmat)
             mujoco.mju_negQuat(site_quat_conj, site_quat)
-            if is_mocap:
-                mujoco.mju_mulQuat(error_quat, data.mocap_quat[mocap_id], site_quat_conj)
-            else:
-                mujoco.mju_mulQuat(error_quat, quat, site_quat_conj)
+            mujoco.mju_mulQuat(error_quat, quat, site_quat_conj)
             mujoco.mju_quat2Vel(twist[3:], error_quat, 1.0)
             twist[3:] *= Kori / integration_dt
 
@@ -178,15 +210,52 @@ def main() -> None:
             data.ctrl[actuator_ids] = tau[actuator_ids]
             mujoco.mj_step(model, data)
 
-            t_elapsed += dt
+            t_seg += dt
+            t_sim += dt
+            step_count += 1
+
+            # Advance to the next goal once this one has run and settled.
+            if (
+                t_seg >= segment_duration + settle_time
+                and segment_index + 1 < n_goals
+            ):
+                segment_index += 1
+                traj = start_segment(segment_index)
+                segment_marks.append((t_sim, f"goal {segment_index + 1}"))
+                t_seg = 0.0
+
+            overlay.append_actual(data.site(site_id).xpos)
+            if step_count % overlay_every == 0:
+                overlay.redraw()
+
             viewer.sync()
             time_until_next_step = dt - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
 
     if log_t:
-        path = plot_dx(log_t, np.array(log_dx), duration=traj.duration)
-        print(f"Wrote tracking-error plot to {path} ({len(log_t)} samples)")
+        t = np.array(log_t)
+        dx_log = np.array(log_dx)
+        cmd_log = np.array(log_cmd)
+        actual_log = np.array(log_actual)
+
+        np.savez(
+            "run_log.npz",
+            t=t,
+            dx=dx_log,
+            commanded=cmd_log,
+            actual=actual_log,
+            segment=np.array(log_segment),
+            goal_pos=goal_pos,
+            goal_quat=goal_quat,
+        )
+        p1 = plot_dx(t, dx_log, segments=segment_marks)
+        p2 = plot_paths(t, cmd_log, actual_log, segments=segment_marks)
+        print(
+            f"{len(t)} samples over {t[-1]:.2f} s, {segment_index + 1} goal(s)\n"
+            f"  final |dx| = {np.linalg.norm(dx_log[-1]):.4f} m\n"
+            f"  wrote run_log.npz, {p1}, {p2}"
+        )
 
 
 if __name__ == "__main__":
