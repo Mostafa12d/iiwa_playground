@@ -26,6 +26,20 @@ XY_MIN: float = 0.20
 JOINT_RANGE_FRACTION: float = 0.85
 
 
+def sample_positions_around(center, n, r_min=0.05, r_max=0.20, seed=None):
+    """Return (n, 3) positions in a spherical shell around `center`.
+
+    Radii are drawn uniformly by volume rather than uniformly in r, so the
+    samples are not bunched toward the inner surface.
+    """
+    rng = np.random.default_rng(seed)
+    directions = rng.normal(size=(n, 3))
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    u = rng.uniform(0.0, 1.0, n)
+    radii = np.cbrt(r_min**3 + u * (r_max**3 - r_min**3))
+    return np.asarray(center) + directions * radii[:, None]
+
+
 def sample_goal_poses(
     model,
     n,

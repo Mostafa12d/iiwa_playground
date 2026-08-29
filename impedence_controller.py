@@ -3,7 +3,7 @@ import mujoco.viewer
 import numpy as np
 import time
 from utils.dual_quat_traj import DualQuaternionTrajectory
-from utils.dx_plot import plot_dx, plot_paths
+from utils.dx_plot import output_dir, plot_dx, plot_paths
 from utils.goal_sampler import sample_goal_poses
 from utils.traj_overlay import TrajectoryOverlay, hide_body_geoms
 
@@ -48,6 +48,9 @@ drive_mocap: bool = True
 
 # Redraw the viewer overlay every N physics steps (~20 Hz at dt = 0.002).
 overlay_every: int = 25
+
+# Figures and the run log land in plots/<run_name>/.
+run_name = "free_space"
 
 
 def main() -> None:
@@ -239,8 +242,9 @@ def main() -> None:
         cmd_log = np.array(log_cmd)
         actual_log = np.array(log_actual)
 
+        out = output_dir(run_name)
         np.savez(
-            "run_log.npz",
+            f"{out}/run_log.npz",
             t=t,
             dx=dx_log,
             commanded=cmd_log,
@@ -249,12 +253,13 @@ def main() -> None:
             goal_pos=goal_pos,
             goal_quat=goal_quat,
         )
-        p1 = plot_dx(t, dx_log, segments=segment_marks)
-        p2 = plot_paths(t, cmd_log, actual_log, segments=segment_marks)
+        plot_dx(t, dx_log, path=f"{out}/dx_error.png", segments=segment_marks)
+        plot_paths(t, cmd_log, actual_log, path=f"{out}/paths.png",
+                   segments=segment_marks)
         print(
             f"{len(t)} samples over {t[-1]:.2f} s, {segment_index + 1} goal(s)\n"
             f"  final |dx| = {np.linalg.norm(dx_log[-1]):.4f} m\n"
-            f"  wrote run_log.npz, {p1}, {p2}"
+            f"  wrote {out}/"
         )
 
 

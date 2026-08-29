@@ -1,2 +1,4 @@
 data/
 *.pyc
+plots/
+.DS_Store
