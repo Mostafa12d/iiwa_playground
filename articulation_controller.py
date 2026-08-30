@@ -48,8 +48,14 @@ track_orientation: bool = True
 # first to produce plots/<object_name>/reachability.npz.
 n_goals: int = 10
 goal_seed: int | None = 0
+
+# A phase ends when the EE settles (speed below settle_vel for settle_window),
+# not after a fixed time. segment_duration only sets the setpoint slew rate;
+# max_phase_time caps a phase that never settles.
 segment_duration: float = 3.0
-settle_time: float = 1.0
+settle_vel: float = 0.005  # [m/s]
+settle_window: float = 1.0  # [s]
+max_phase_time: float = 8.0  # [s]
 
 overlay_every: int = 25
 
@@ -151,6 +157,8 @@ def main(object_name=object_name) -> None:
 
         segment_index = 0
         returning = False
+        done = False
+        below_time = 0.0
         traj = start_segment(goals[0], goal_quats[0], 0)
         t_seg = t_sim = 0.0
         step_count = 0
@@ -159,12 +167,9 @@ def main(object_name=object_name) -> None:
         log_rel_pos, log_rel_ang, log_door, log_segment = [], [], [], []
         segment_marks = [(0.0, "goal 1")]
 
-        # The trajectory is finite; do not let the log length depend on when the
-        # viewer happens to be closed. Two phases (out + back) per goal.
-        run_time = n_goals * 2 * (segment_duration + settle_time)
         dtheta = np.zeros(3)
 
-        while viewer.is_running() and t_sim < run_time:
+        while viewer.is_running() and not done:
             step_start = time.time()
 
             pos, quat = traj.sample(t_seg)
@@ -192,6 +197,8 @@ def main(object_name=object_name) -> None:
             twist[3:] = dtheta * (Kori / integration_dt) if track_orientation else 0.0
 
             mujoco.mj_jacSite(model, data, jac[:3], jac[3:], site_id)
+            ee_speed = np.linalg.norm(jac[:3] @ data.qvel)
+            below_time = below_time + dt if ee_speed < settle_vel else 0.0
             mujoco.mj_solveM(model, data, M_inv, np.eye(model.nv))
             Mx_inv = jac @ M_inv @ jac.T
             if abs(np.linalg.det(Mx_inv)) >= 1e-2:
@@ -223,7 +230,9 @@ def main(object_name=object_name) -> None:
             t_sim += dt
             step_count += 1
 
-            if t_seg >= segment_duration + settle_time:
+            settled = t_seg >= segment_duration and below_time >= settle_window
+            if settled or t_seg >= max_phase_time:
+                below_time = 0.0
                 if not returning:
                     # Out phase done; drive back to the initial grasp pose.
                     returning = True
@@ -239,6 +248,8 @@ def main(object_name=object_name) -> None:
                     )
                     segment_marks.append((t_sim, f"goal {segment_index + 1}"))
                     t_seg = 0.0
+                else:
+                    done = True
 
             overlay.append_actual(data.site(site_id).xpos)
             if step_count % overlay_every == 0:
