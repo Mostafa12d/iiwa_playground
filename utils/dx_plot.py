@@ -145,6 +145,51 @@ def plot_dx(t, dx, path="dx_error.png", segments=None):
     return path
 
 
+def plot_dtheta(t, dtheta, path="dtheta_error.png", segments=None):
+    """t: (N,) seconds. dtheta: (N, 3) orientation error as a rotation vector [rad].
+
+    Companion to plot_dx: without it there is no way to see whether the
+    orientation task is tracking or standing off.
+    """
+    t = np.asarray(t)
+    dtheta = np.asarray(dtheta)
+    norm = np.linalg.norm(dtheta, axis=1)
+
+    fig, (ax_c, ax_n) = plt.subplots(
+        2, 1, figsize=(9.5, 6.5), sharex=True, height_ratios=[1.4, 1],
+        constrained_layout=True,
+    )
+    fig.patch.set_facecolor(SURFACE)
+
+    for i, (name, color) in enumerate(zip(AXES, SERIES)):
+        ax_c.plot(t, dtheta[:, i], color=color, linewidth=2, label=f"r{name}")
+        _peak_label(ax_c, t, dtheta[:, i], color, f"r{name}")
+    ax_c.axhline(0, color=AXIS, linewidth=1)
+    ax_c.set_ylabel("component error [rad]", color=INK_SECONDARY, fontsize=10)
+    ax_c.set_title(
+        "Orientation tracking error at attachment_site",
+        color=INK_PRIMARY, fontsize=13, fontweight="bold", loc="left", pad=16,
+    )
+    _legend(ax_c, loc="lower right", ncols=3)
+
+    ax_n.plot(t, norm, color=NORM, linewidth=2)
+    _label_at(ax_n, t, norm, -1, NORM, f"{norm[-1]:.4f} rad")
+    ax_n.set_ylabel("angle [rad]", color=INK_SECONDARY, fontsize=10)
+    ax_n.set_xlabel("simulation time [s]", color=INK_SECONDARY, fontsize=10)
+    ax_n.set_title(
+        "Error magnitude", color=INK_SECONDARY, fontsize=10, loc="left", pad=8
+    )
+
+    for ax in (ax_c, ax_n):
+        _style(ax)
+    _segment_marks((ax_c, ax_n), segments, ax_c)
+    _headroom(ax_n, t)
+
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+    return path
+
+
 def plot_relative_frame(
     t, rel_pos, rel_angle, path="handle_frame.png", segments=None, name="cab_handle"
 ):
