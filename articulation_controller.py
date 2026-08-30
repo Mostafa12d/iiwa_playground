@@ -5,6 +5,7 @@
 """
 
 import argparse
+import os
 import time
 
 import mujoco
@@ -21,7 +22,7 @@ from utils.dx_plot import (
     plot_relative_frame,
 )
 from utils.frames import FrameTracker, quat_angle
-from utils.goal_sampler import poses_along_hinge_arc
+from utils.goal_sampler import sample_feasible_targets
 from utils.traj_overlay import TrajectoryOverlay
 
 # Cartesian impedance control gains.
@@ -42,9 +43,11 @@ dt: float = 0.002
 # orientation task and let the weld alone decide the orientation.
 track_orientation: bool = True
 
-# Goals, as fractions of the hinge's range of motion. Fractions rather than
-# absolute angles so the same schedule works across objects.
-open_fractions = (0.15, 0.35, 0.60, 0.85)
+# Goals are drawn from the feasible targets of a reachability survey. Run
+#   python3 reachability_survey.py <object_name>
+# first to produce plots/<object_name>/reachability.npz.
+n_goals: int = 4
+goal_seed: int | None = 0
 segment_duration: float = 3.0
 settle_time: float = 1.0
 
@@ -110,14 +113,17 @@ def main(object_name=object_name) -> None:
         print(f"handle reference frame: pos {np.round(handle.ref_pos, 4)} "
               f"quat {np.round(handle.ref_quat, 4)}")
 
-        # Goals on the lid arc - the end-effector's entire reachable set.
-        goal_angles = np.array(open_fractions) * hinge_limit
-        goals, goal_quats = poses_along_hinge_arc(
-            model, data, goal_angles, hinge_name, f"{PREFIX}handle"
-        )
-        n_goals = len(goal_angles)
-        print("goal hinge angles [rad]: " + ", ".join(f"{a:.3f}" for a in goal_angles)
-              + f" (limit {hinge_limit:.3f})")
+        # Goals: feasible EE targets from the reachability survey. The arm is
+        # welded to the handle, so most of these are off the lid arc and cannot
+        # actually be reached - commanding toward them is the interaction test.
+        survey_npz = f"{output_dir(object_name)}/reachability.npz"
+        if not os.path.exists(survey_npz):
+            raise SystemExit(
+                f"{survey_npz} not found. Run:\n"
+                f"  python3 reachability_survey.py {object_name}"
+            )
+        goals, goal_quats = sample_feasible_targets(survey_npz, n_goals, goal_seed)
+        print(f"{n_goals} feasible goals from {survey_npz}")
 
         overlay = TrajectoryOverlay(viewer.user_scn)
         overlay.set_goals(goals)
@@ -144,7 +150,7 @@ def main(object_name=object_name) -> None:
 
         log_t, log_dx, log_dtheta, log_cmd, log_actual = [], [], [], [], []
         log_rel_pos, log_rel_ang, log_door, log_segment = [], [], [], []
-        segment_marks = [(0.0, f"{goal_angles[0]:.2f} rad")]
+        segment_marks = [(0.0, "goal 1")]
 
         # The trajectory is finite; do not let the log length depend on when the
         # viewer happens to be closed.
@@ -213,7 +219,7 @@ def main(object_name=object_name) -> None:
             if t_seg >= segment_duration + settle_time and segment_index + 1 < n_goals:
                 segment_index += 1
                 traj = start_segment(segment_index)
-                segment_marks.append((t_sim, f"{goal_angles[segment_index]:.2f} rad"))
+                segment_marks.append((t_sim, f"goal {segment_index + 1}"))
                 t_seg = 0.0
 
             overlay.append_actual(data.site(site_id).xpos)
@@ -248,7 +254,6 @@ def main(object_name=object_name) -> None:
             segment=np.array(log_segment),
             goals=goals,
             goal_quats=goal_quats,
-            goal_angles=goal_angles,
         )
         plot_dx(t, dx_log, path=f"{out}/dx_error.png", segments=segment_marks)
         plot_dtheta(t, dtheta_log, path=f"{out}/dtheta_error.png",
@@ -268,8 +273,7 @@ def main(object_name=object_name) -> None:
             f"  handle displacement = {np.linalg.norm(rel_pos_log[-1]):.4f} m "
             f"(max {np.linalg.norm(rel_pos_log, axis=1).max():.4f} m)\n"
             f"  hinge angle         = {door_log[-1]:.4f} rad "
-            f"(max {door_log.max():.4f} of {hinge_limit:.4f}, "
-            f"target {goal_angles[-1]:.4f})\n"
+            f"(max {door_log.max():.4f} of {hinge_limit:.4f})\n"
             f"  wrote {out}/"
         )
 
