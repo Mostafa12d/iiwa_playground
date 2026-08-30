@@ -46,7 +46,7 @@ track_orientation: bool = True
 # Goals are drawn from the feasible targets of a reachability survey. Run
 #   python3 reachability_survey.py <object_name>
 # first to produce plots/<object_name>/reachability.npz.
-n_goals: int = 4
+n_goals: int = 10
 goal_seed: int | None = 0
 segment_duration: float = 3.0
 settle_time: float = 1.0
@@ -128,15 +128,21 @@ def main(object_name=object_name) -> None:
         overlay = TrajectoryOverlay(viewer.user_scn)
         overlay.set_goals(goals)
 
+        # Each goal is an independent attempt from the initial grasp pose: drive
+        # out toward the goal, then drive back to this pose before the next goal.
+        init_pos = data.site(site_id).xpos.copy()
+        init_quat = np.zeros(4)
+        mujoco.mju_mat2Quat(init_quat, data.site(site_id).xmat)
+
         start_quat = np.zeros(4)
 
-        def start_segment(index):
+        def start_segment(pos_goal, quat_goal, index):
             mujoco.mju_mat2Quat(start_quat, data.site(site_id).xmat)
             segment = DualQuaternionTrajectory(
                 pos_start=data.site(site_id).xpos.copy(),
                 quat_start=start_quat.copy(),
-                pos_goal=goals[index],
-                quat_goal=goal_quats[index],
+                pos_goal=pos_goal,
+                quat_goal=quat_goal,
                 duration=segment_duration,
             )
             overlay.set_commanded(segment)
@@ -144,7 +150,8 @@ def main(object_name=object_name) -> None:
             return segment
 
         segment_index = 0
-        traj = start_segment(segment_index)
+        returning = False
+        traj = start_segment(goals[0], goal_quats[0], 0)
         t_seg = t_sim = 0.0
         step_count = 0
 
@@ -153,8 +160,8 @@ def main(object_name=object_name) -> None:
         segment_marks = [(0.0, "goal 1")]
 
         # The trajectory is finite; do not let the log length depend on when the
-        # viewer happens to be closed.
-        run_time = n_goals * (segment_duration + settle_time)
+        # viewer happens to be closed. Two phases (out + back) per goal.
+        run_time = n_goals * 2 * (segment_duration + settle_time)
         dtheta = np.zeros(3)
 
         while viewer.is_running() and t_sim < run_time:
@@ -216,11 +223,22 @@ def main(object_name=object_name) -> None:
             t_sim += dt
             step_count += 1
 
-            if t_seg >= segment_duration + settle_time and segment_index + 1 < n_goals:
-                segment_index += 1
-                traj = start_segment(segment_index)
-                segment_marks.append((t_sim, f"goal {segment_index + 1}"))
-                t_seg = 0.0
+            if t_seg >= segment_duration + settle_time:
+                if not returning:
+                    # Out phase done; drive back to the initial grasp pose.
+                    returning = True
+                    traj = start_segment(init_pos, init_quat, segment_index)
+                    segment_marks.append((t_sim, f"return {segment_index + 1}"))
+                    t_seg = 0.0
+                elif segment_index + 1 < n_goals:
+                    # Back at the start; begin the next goal's out phase.
+                    segment_index += 1
+                    returning = False
+                    traj = start_segment(
+                        goals[segment_index], goal_quats[segment_index], segment_index
+                    )
+                    segment_marks.append((t_sim, f"goal {segment_index + 1}"))
+                    t_seg = 0.0
 
             overlay.append_actual(data.site(site_id).xpos)
             if step_count % overlay_every == 0:
