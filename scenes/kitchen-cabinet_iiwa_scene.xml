@@ -56,10 +56,17 @@
            - (link7.xpos   + link7.xmat   @ relpose_pos)
          so anchor and relpose_pos must name the SAME physical point in their two
          body frames - the handle. -->
+    <!-- Rigid original (swap the comment to restore):
     <weld name="ee_to_handle" body1="link7" body2="obj_lid"
           anchor="-0.49766000 0.00228000 0.07387000"
           relpose="0.00000005 -0.00000000 0.04500000 -0.00000002 0.99975337 -0.00000007 -0.02220787"
           solref="0.002 1" solimp="0.99 0.999 0.001 0.5 2"/>
+    -->
+    <!-- Softened: compliant coupling so controller impedance shows as EE deflection. -->
+    <weld name="ee_to_handle" body1="link7" body2="obj_lid"
+          anchor="-0.49766000 0.00228000 0.07387000"
+          relpose="0.00000005 -0.00000000 0.04500000 -0.00000002 0.99975337 -0.00000007 -0.02220787"
+          solref="0.05 1" solimp="0.3 0.3 0.001 0.5 2"/>
   </equality>
 
   <!-- qpos: joint1..7 then obj_lid_hinge. Lid closed, EE on the handle. -->

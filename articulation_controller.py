@@ -26,8 +26,8 @@ from utils.goal_sampler import sample_feasible_targets
 from utils.traj_overlay import TrajectoryOverlay
 
 # Cartesian impedance control gains.
-impedance_pos = np.asarray([10.0, 10.0, 10.0])  # [N/m]
-# impedance_pos = np.asarray([10.0, 10.0, 10.0])  # [N/m]
+impedance_pos = np.asarray([100.0, 100.0, 100.0])  # [N/m]
+# impedance_pos = np.asarray([1.0, 1.0, 1.0])  # [N/m]
 
 impedance_ori = np.asarray([50.0, 50.0, 50.0])  # [Nm/rad]
 
@@ -116,7 +116,6 @@ def main(object_name=object_name) -> None:
         mujoco.mj_resetDataKeyframe(model, data, key_id)
         mujoco.mj_forward(model, data)
         mujoco.mjv_defaultFreeCamera(model, viewer.cam)
-        viewer.opt.frame = mujoco.mjtFrame.mjFRAME_SITE
 
         # Reference frame for the handle: wherever it is right now, at the grasp.
         handle = FrameTracker(model, data, f"{PREFIX}handle")

@@ -15,6 +15,44 @@ GOAL_ACTIVE_RGBA = np.array([0.106, 0.686, 0.478, 1.0], dtype=np.float32)
 
 _IDENTITY = np.eye(3).flatten()
 
+# RViz axis convention: x red, y green, z blue.
+_AXIS_RGBA = (
+    np.array([0.90, 0.15, 0.15, 1.0], dtype=np.float32),
+    np.array([0.15, 0.75, 0.20, 1.0], dtype=np.float32),
+    np.array([0.20, 0.45, 0.95, 1.0], dtype=np.float32),
+)
+
+
+def draw_frame(scene, pos, mat, length=0.16, width=0.009, label=None):
+    """Draw an RViz-style RGB axis triad (x red, y green, z blue) at a pose.
+
+    scene: an mjvScene (viewer.user_scn or a renderer's scene). pos: (3,) world
+    position. mat: (3, 3) or (9,) world rotation whose columns are the axes.
+    Appends to scene.geoms; call after whatever clears scene.ngeom.
+    """
+    pos = np.asarray(pos, dtype=np.float64).reshape(3)
+    mat = np.asarray(mat, dtype=np.float64).reshape(3, 3)
+    for axis in range(3):
+        if scene.ngeom >= scene.maxgeom:
+            return
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom, mujoco.mjtGeom.mjGEOM_ARROW, np.zeros(3), np.zeros(3),
+            _IDENTITY, _AXIS_RGBA[axis],
+        )
+        mujoco.mjv_connector(
+            geom, mujoco.mjtGeom.mjGEOM_ARROW, width, pos, pos + length * mat[:, axis]
+        )
+        scene.ngeom += 1
+    if label is not None and scene.ngeom < scene.maxgeom:
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom, mujoco.mjtGeom.mjGEOM_SPHERE, np.array([width * 1.5, 0.0, 0.0]),
+            pos, _IDENTITY, np.array([0.1, 0.1, 0.1, 1.0], dtype=np.float32),
+        )
+        geom.label = label
+        scene.ngeom += 1
+
 
 def hide_body_geoms(model, body_name):
     """Hide a body's geoms while leaving its sites (and their frames) visible.
