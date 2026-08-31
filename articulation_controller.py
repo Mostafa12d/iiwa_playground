@@ -26,11 +26,15 @@ from utils.goal_sampler import sample_feasible_targets
 from utils.traj_overlay import TrajectoryOverlay
 
 # Cartesian impedance control gains.
-impedance_pos = np.asarray([200.0, 200.0, 200.0])  # [N/m]
+impedance_pos = np.asarray([10.0, 10.0, 10.0])  # [N/m]
+# impedance_pos = np.asarray([10.0, 10.0, 10.0])  # [N/m]
+
 impedance_ori = np.asarray([50.0, 50.0, 50.0])  # [Nm/rad]
 
 # Joint impedance control gains.
 Kp_null = np.asarray([75.0, 75.0, 50.0, 50.0, 40.0, 25.0, 25.0])
+# Kp_null = np.asarray([75.0, 75.0, 50.0, 50.0, 40.0, 25.0, 25.0])
+
 
 damping_ratio = 1.0
 Kpos: float = 0.95
