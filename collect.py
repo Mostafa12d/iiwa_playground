@@ -46,6 +46,71 @@ NEAR_LIMIT_FRAC = 0.05  # within this fraction of travel counts as near-limit
 QACC_BAD = 1e4
 JUMP_SIGMA = 8.0        # single-step jump this many MADs out is an outlier
 
+# --- mechanics randomization ------------------------------------------------
+# Per-episode draws, logged as gt_* columns. Ranges bracket each object's stock
+# value and reach up to where the hinge actually resists the arm.
+MECHANICS = {
+    "hinge_damping": (0.01, 2.0),        # [Nms/rad]  stock 0.08
+    "hinge_frictionloss": (0.005, 1.5),  # [Nm]       stock 0.03
+    "hinge_stiffness": (0.0, 3.0),       # [Nm/rad]   stock 0.0
+    "hinge_armature": (0.0, 0.05),       # [kg m^2]   stock 0.0
+    "lid_mass_scale": (0.5, 2.0),        # scales lid mass and inertia
+}
+# Sampled in log space, so the stiff end is not oversampled.
+LOG_UNIFORM = {"hinge_damping", "hinge_frictionloss", "lid_mass_scale"}
+
+
+def sample_mechanics(rng, randomize=True):
+    """Draw one episode's hinge/lid parameters. Deterministic given `rng`."""
+    out = {}
+    for name, (lo, hi) in MECHANICS.items():
+        if not randomize:
+            out[name] = None          # keep whatever the model already has
+        elif name in LOG_UNIFORM:
+            out[name] = float(np.exp(rng.uniform(np.log(lo), np.log(hi))))
+        else:
+            out[name] = float(rng.uniform(lo, hi))
+    return out
+
+
+def apply_mechanics(model, hinge_id, lid_id, params, base):
+    """Write sampled parameters into the model. `base` holds the stock values."""
+    hdof = model.jnt_dofadr[hinge_id]
+    if params["hinge_damping"] is not None:
+        model.dof_damping[hdof] = params["hinge_damping"]
+    if params["hinge_frictionloss"] is not None:
+        model.dof_frictionloss[hdof] = params["hinge_frictionloss"]
+    if params["hinge_stiffness"] is not None:
+        model.jnt_stiffness[hinge_id] = params["hinge_stiffness"]
+    if params["hinge_armature"] is not None:
+        model.dof_armature[hdof] = params["hinge_armature"]
+    s = params["lid_mass_scale"]
+    if s is not None:
+        model.body_mass[lid_id] = base["lid_mass"] * s
+        model.body_inertia[lid_id] = base["lid_inertia"] * s
+        # body_mass/inertia feed cached model constants (subtree mass etc.),
+        # which do not update on their own.
+        mujoco.mj_setConst(model, mujoco.MjData(model))
+
+
+def derived_gt(model, data, hinge_id, handle_id, lid_id):
+    """Quantities that follow from the sampled mechanics. Call after applying."""
+    hdof = model.jnt_dofadr[hinge_id]
+    mujoco.mj_resetDataKeyframe(model, data, model.key("grasp").id)
+    mujoco.mj_forward(model, data)
+
+    M = np.zeros((model.nv, model.nv))
+    mujoco.mj_fullM(model, data, M)
+    axis, anchor = data.xaxis[hinge_id], data.xanchor[hinge_id]
+    lever = float(np.linalg.norm(
+        np.cross(data.site(handle_id).xpos - anchor, axis)))
+    return {
+        "lid_mass": float(model.body_mass[lid_id]),
+        "inertia_about_hinge": float(M[hdof, hdof]),
+        "lever_arm": lever,
+        "effective_mass_at_handle": float(M[hdof, hdof]) / lever**2,
+    }
+
 
 def ground_truth(model, data, hinge_id, handle_id):
     """Privileged object mechanics. Read once per episode."""
@@ -226,8 +291,7 @@ def flag_outliers(x):
     return d > med + JUMP_SIGMA * scale
 
 
-def collect(objects, n_episodes, seed, tag):
-    rng = np.random.default_rng(seed)
+def collect(objects, n_episodes, seed, tag, randomize=True):
     rows, episodes, gts = [], [], {}
     ep_id = 0
 
@@ -237,6 +301,9 @@ def collect(objects, n_episodes, seed, tag):
         data = mujoco.MjData(model)
         hinge_id = model.joint(f"{PREFIX}lid_hinge").id
         handle_id = model.site(f"{PREFIX}handle").id
+        lid_id = model.body(f"{PREFIX}lid").id
+        base_mech = {"lid_mass": float(model.body_mass[lid_id]),
+                     "lid_inertia": model.body_inertia[lid_id].copy()}
 
         mujoco.mj_resetDataKeyframe(model, data, model.key("grasp").id)
         mujoco.mj_forward(model, data)
@@ -248,7 +315,16 @@ def collect(objects, n_episodes, seed, tag):
             print(f"{name}: no feasible targets, skipping")
             continue
 
-        for _ in range(n_episodes):
+        for ep_k in range(n_episodes):
+            # Seeded from (root, object, episode), so a given episode is
+            # reproducible regardless of how many objects or episodes were
+            # requested alongside it.
+            rng = np.random.default_rng([seed, obj_id, ep_k])
+
+            mech = sample_mechanics(rng, randomize)
+            apply_mechanics(model, hinge_id, lid_id, mech, base_mech)
+            ep_gt = derived_gt(model, data, hinge_id, handle_id, lid_id)
+
             k = int(rng.choice(feas))
             theta = float(surv["hinge_angle"][k])
             goal = surv["targets"][k]
@@ -267,6 +343,13 @@ def collect(objects, n_episodes, seed, tag):
             ep["episode_id"] = np.full(T, ep_id)
             ep["object_id"] = np.full(T, obj_id)
             ep["step"] = np.arange(T)
+
+            # Randomized mechanics vary per episode, so they are per-timestep
+            # columns rather than static per-object entries.
+            for k_, v_ in mech.items():
+                ep[f"gt_{k_}"] = np.full(T, np.nan if v_ is None else v_)
+            for k_, v_ in ep_gt.items():
+                ep[f"gt_{k_}"] = np.full(T, v_)
             rows.append(ep)
 
             start_handle = ep["handle_pos"][0]
@@ -279,6 +362,8 @@ def collect(objects, n_episodes, seed, tag):
                 "steps": T, "diverged": bool(blew),
                 "travel_reached": float(ep["travel_frac"].max()),
                 "wall_s": round(time.time() - t0, 2),
+                "mechanics": {k_: v_ for k_, v_ in mech.items()},
+                **{k_: round(v_, 6) for k_, v_ in ep_gt.items()},
             })
             print(f"  ep {ep_id:3d} {name:16s} theta0={theta:5.3f} "
                   f"T={T:5d} travel={ep['travel_frac'].max():.3f} "
@@ -293,12 +378,15 @@ def collect(objects, n_episodes, seed, tag):
 
     os.makedirs("datasets", exist_ok=True)
     path = f"datasets/{tag}.npz"
-    gt_flat = {f"gt/{n}/{k}": v for n, g in gts.items() for k, v in g.items()}
+    randomized = set(MECHANICS) | {"lid_mass", "inertia_about_hinge",
+                                   "lever_arm", "effective_mass_at_handle"}
+    gt_flat = {f"gt/{n}/{k}": v for n, g in gts.items()
+               for k, v in g.items() if k not in randomized}
     np.savez_compressed(path, **ds, **gt_flat,
                         objects=np.array(objects, dtype=object))
 
     with open(f"datasets/{tag}_schema.json", "w") as f:
-        json.dump(schema(objects, episodes, gts), f, indent=2, default=str)
+        json.dump(schema(objects, episodes, gts, seed, randomize), f, indent=2, default=str)
 
     n = len(ds["t"])
     print(f"\n{len(episodes)} episodes, {n} timesteps -> {path} "
@@ -313,7 +401,7 @@ def collect(objects, n_episodes, seed, tag):
     return path
 
 
-def schema(objects, episodes, gts):
+def schema(objects, episodes, gts, seed, randomize):
     return {
         "frames": {
             "reference": "world == robot_base",
@@ -340,6 +428,15 @@ def schema(objects, episodes, gts):
         "derived": {
             "weld_wrench_ee": "pinv(J_arm.T) @ qfrc_constraint[arm]",
         },
+        "mechanics": {
+            "randomized": randomize,
+            "seed": seed,
+            "seed_scheme": "default_rng([seed, object_id, episode_index])",
+            "ranges": {k: list(v) for k, v in MECHANICS.items()},
+            "log_uniform": sorted(LOG_UNIFORM),
+            "per_timestep_columns": "gt_*",
+            "static_columns": "gt/<object>/* (geometry only)",
+        },
         "objects": {n: {k: (v.tolist() if isinstance(v, np.ndarray) else v)
                         for k, v in g.items()} for n, g in gts.items()},
         "episodes": episodes,
@@ -353,8 +450,10 @@ def main():
                    help="episodes per object")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--tag", default="v1")
+    p.add_argument("--no-randomize", action="store_true",
+                   help="keep each object's stock mechanics")
     a = p.parse_args()
-    collect(a.objects, a.episodes, a.seed, a.tag)
+    collect(a.objects, a.episodes, a.seed, a.tag, not a.no_randomize)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 data/
 *.pyc
-plots/
+plots/*
 .DS_Store
 .claude/
 MUJOCO_LOG.TXT
+datasets/*
+checkpoints/*

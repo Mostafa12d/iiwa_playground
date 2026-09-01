@@ -20,7 +20,7 @@ import time
 import numpy as np
 import torch
 
-from dynamics_model import BELIEF_DIM, SecondDifferenceModel, save
+from dynamics_network import BELIEF_DIM, SecondDifferenceModel, save
 
 
 def load_dataset(path):
