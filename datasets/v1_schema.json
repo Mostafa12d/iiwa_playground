@@ -1,0 +1,865 @@
+{
+  "frames": {
+    "world": "IDENTICAL to the robot base frame. Scenes are built with arm_mount at the origin, unrotated, so every position, velocity, Jacobian and wrench below is already base-relative. No transform is applied anywhere.",
+    "orientation": "quaternions are (w, x, y, z), MuJoCo convention",
+    "twist": "ee_twist and handle vel are [linear(3), angular(3)] in the base frame, from mj_jacSite / mj_objectVelocity"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "time": "s",
+    "force": "N",
+    "torque": "Nm",
+    "mass": "kg",
+    "inertia": "kg m^2",
+    "stiffness_pos": "N/m",
+    "stiffness_ori": "Nm/rad"
+  },
+  "controller": {
+    "type": "Cartesian impedance + nullspace posture task",
+    "Kp_pos": 50.0,
+    "Kp_ori": 25.0,
+    "damping_ratio": 1.0,
+    "Kp_null": [
+      75.0,
+      75.0,
+      50.0,
+      50.0,
+      40.0,
+      25.0,
+      25.0
+    ],
+    "dt": 0.002,
+    "note": "Kp is LOW on purpose: stiction+damping at the handle is only 0.06-0.16 N on these objects, so stiffer gains make the arm insensitive to the object.",
+    "caveat": "the nullspace posture reference is the CLOSED-door keyframe, so it pulls the door shut and costs roughly 20-25% of achievable travel. Not yet fixed."
+  },
+  "namespaces": {
+    "obs/": "measurable on a real robot",
+    "gt/": "privileged. analysis only, never a model input",
+    "flag_": "validity flags"
+  },
+  "known_limitations": [
+    "Goals come from a free-space IK survey, so most are off the weld constraint manifold; the door typically parks well short of its limit. Travel coverage is partial.",
+    "No mechanics randomization yet: every object has damping=0.08, frictionloss=0.03, stiffness=0. The impedance gain is therefore only weakly identifiable from this dataset.",
+    "No sensor-noise / delay variant. All signals are idealized.",
+    "weld_wrench_ee is recovered as pinv(J_arm^T) @ qfrc_constraint[arm], i.e. the wrench at the EE consistent with the arm-side constraint force. Raw efc_force/efc_pos and qfrc_constraint_all are logged so it can be re-derived differently offline.",
+    "A goal surveyed at one hinge angle may be run from a different start angle in principle; here start angle is taken from the survey row, so they match."
+  ],
+  "objects": {
+    "kitchen-cabinet": {
+      "lid_mass": 1.6,
+      "base_mass": 6.0,
+      "lid_inertia_diag": [
+        0.08425383010701791,
+        0.04410019338969099,
+        0.04057397650329115
+      ],
+      "inertia_about_hinge": 0.15530307359964374,
+      "hinge_damping": 0.08,
+      "hinge_frictionloss": 0.03,
+      "hinge_stiffness": 0.0,
+      "hinge_armature": 0.0,
+      "hinge_axis": [
+        0.0,
+        -3.6732051031940216e-06,
+        0.9999999999932537
+      ],
+      "hinge_anchor": [
+        0.4643899999999999,
+        0.8231590958407624,
+        0.5974498918591812
+      ],
+      "hinge_range": [
+        0.0,
+        1.8326
+      ],
+      "lever_arm": 0.5031125644425906,
+      "effective_mass_at_handle": 0.6135496664784297,
+      "weld_solref": [
+        0.1,
+        1.0
+      ],
+      "weld_solimp": [
+        0.99,
+        0.999,
+        0.001,
+        0.5,
+        2.0
+      ]
+    },
+    "minifridge": {
+      "lid_mass": 3.0,
+      "base_mass": 18.0,
+      "lid_inertia_diag": [
+        0.2976745616541416,
+        0.15637962273673553,
+        0.14456581560912285
+      ],
+      "inertia_about_hinge": 0.5894564227001963,
+      "hinge_damping": 0.08,
+      "hinge_frictionloss": 0.03,
+      "hinge_stiffness": 0.0,
+      "hinge_armature": 0.0,
+      "hinge_axis": [
+        0.0,
+        -3.6732051031940216e-06,
+        0.9999999999932537
+      ],
+      "hinge_anchor": [
+        -0.85363,
+        0.6289399399405515,
+        0.4421513856797829
+      ],
+      "hinge_range": [
+        0.0,
+        1.9722
+      ],
+      "lever_arm": 0.6693887708200668,
+      "effective_mass_at_handle": 1.315512135496672,
+      "weld_solref": [
+        0.1,
+        1.0
+      ],
+      "weld_solimp": [
+        0.99,
+        0.999,
+        0.001,
+        0.5,
+        2.0
+      ]
+    },
+    "safe": {
+      "lid_mass": 7.0,
+      "base_mass": 35.0,
+      "lid_inertia_diag": [
+        0.4277399117850117,
+        0.3137615252980833,
+        0.12509756291690502
+      ],
+      "inertia_about_hinge": 1.239886927600002,
+      "hinge_damping": 0.08,
+      "hinge_frictionloss": 0.03,
+      "hinge_stiffness": 0.0,
+      "hinge_armature": 0.0,
+      "hinge_axis": [
+        0.0,
+        3.6732051031940216e-06,
+        -0.9999999999932537
+      ],
+      "hinge_anchor": [
+        -0.32615999999999995,
+        0.7713700323249776,
+        0.2441995793078789
+      ],
+      "hinge_range": [
+        0.0,
+        1.5533
+      ],
+      "lever_arm": 0.34428448077135276,
+      "effective_mass_at_handle": 10.460373409470039,
+      "weld_solref": [
+        0.1,
+        1.0
+      ],
+      "weld_solimp": [
+        0.99,
+        0.999,
+        0.001,
+        0.5,
+        2.0
+      ]
+    }
+  },
+  "episodes": [
+    {
+      "episode_id": 0,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 1.37445,
+      "goal": [
+        0.5605641306430088,
+        0.2462949530767019,
+        0.8189776788232347
+      ],
+      "goal_quat": [
+        -0.015783999433726582,
+        -0.0157816161949221,
+        0.7068754102099745,
+        0.7069858275755115
+      ],
+      "deviation_from_handle_m": 0.26114034057462804,
+      "steps": 2895,
+      "diverged": false,
+      "travel_reached": 0.75,
+      "wall_s": 1.7
+    },
+    {
+      "episode_id": 1,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.45815,
+      "goal": [
+        0.12012576777921706,
+        0.5827556424549609,
+        0.676621731092339
+      ],
+      "goal_quat": [
+        -0.015783982061611287,
+        -0.015781588216951744,
+        0.7068753620811047,
+        0.706985876709242
+      ],
+      "deviation_from_handle_m": 0.11331913939036735,
+      "steps": 2354,
+      "diverged": false,
+      "travel_reached": 0.30687521308787646,
+      "wall_s": 1.41
+    },
+    {
+      "episode_id": 2,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.45815,
+      "goal": [
+        0.280488125175464,
+        0.39792413789533626,
+        0.5398185632017224
+      ],
+      "goal_quat": [
+        -0.015783982061611287,
+        -0.015781588216951744,
+        0.7068753620811047,
+        0.706985876709242
+      ],
+      "deviation_from_handle_m": 0.2750751128002918,
+      "steps": 2103,
+      "diverged": false,
+      "travel_reached": 0.40733079693039986,
+      "wall_s": 1.72
+    },
+    {
+      "episode_id": 3,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.18514767455345274,
+        0.6313116180196767,
+        0.791738153219293
+      ],
+      "goal_quat": [
+        -0.015703526285216103,
+        -0.01570352395704432,
+        0.7069309807594245,
+        0.7069337925435855
+      ],
+      "deviation_from_handle_m": 0.2717586943491074,
+      "steps": 1909,
+      "diverged": false,
+      "travel_reached": 0.08416390821264773,
+      "wall_s": 1.12
+    },
+    {
+      "episode_id": 4,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.1934319795129908,
+        0.5915002054907905,
+        0.7389019250809357
+      ],
+      "goal_quat": [
+        -0.015703526285216103,
+        -0.01570352395704432,
+        0.7069309807594245,
+        0.7069337925435855
+      ],
+      "deviation_from_handle_m": 0.2644203496585642,
+      "steps": 1905,
+      "diverged": false,
+      "travel_reached": 0.1073860077189175,
+      "wall_s": 0.91
+    },
+    {
+      "episode_id": 5,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.11969238859642262,
+        0.6977567998558493,
+        0.45080300346321445
+      ],
+      "goal_quat": [
+        -0.015703526285216103,
+        -0.01570352395704432,
+        0.7069309807594245,
+        0.7069337925435855
+      ],
+      "deviation_from_handle_m": 0.1797318646899145,
+      "steps": 1918,
+      "diverged": false,
+      "travel_reached": 0.0652840284493639,
+      "wall_s": 0.97
+    },
+    {
+      "episode_id": 6,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.11448511830366866,
+        0.7474547401194077,
+        0.363478909085152
+      ],
+      "goal_quat": [
+        -0.015703526285216103,
+        -0.01570352395704432,
+        0.7069309807594245,
+        0.7069337925435855
+      ],
+      "deviation_from_handle_m": 0.249827258169532,
+      "steps": 1867,
+      "diverged": false,
+      "travel_reached": 0.03527235987110356,
+      "wall_s": 0.89
+    },
+    {
+      "episode_id": 7,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.1613596069183214,
+        0.6856802050418599,
+        0.6303295231988711
+      ],
+      "goal_quat": [
+        -0.015703526285216103,
+        -0.01570352395704432,
+        0.7069309807594245,
+        0.7069337925435855
+      ],
+      "deviation_from_handle_m": 0.1462511243299339,
+      "steps": 1902,
+      "diverged": false,
+      "travel_reached": 0.05999020215245202,
+      "wall_s": 0.93
+    },
+    {
+      "episode_id": 8,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        0.1844629814487142,
+        0.7068539360007131,
+        0.5052509542474758
+      ],
+      "goal_quat": [
+        -0.015703526285216103,
+        -0.01570352395704432,
+        0.7069309807594245,
+        0.7069337925435855
+      ],
+      "deviation_from_handle_m": 0.24111120187788743,
+      "steps": 3164,
+      "diverged": false,
+      "travel_reached": 0.3420619919869845,
+      "wall_s": 1.56
+    },
+    {
+      "episode_id": 9,
+      "object": "kitchen-cabinet",
+      "object_id": 0,
+      "family": "door",
+      "start_hinge_angle": 0.9163,
+      "goal": [
+        0.15549343348494796,
+        0.4661179461474663,
+        0.8577184613031712
+      ],
+      "goal_quat": [
+        -0.0157839813638547,
+        -0.01578158991551138,
+        0.706875390213735,
+        0.7069858485586703
+      ],
+      "deviation_from_handle_m": 0.27851845043152773,
+      "steps": 1974,
+      "diverged": false,
+      "travel_reached": 0.5,
+      "wall_s": 1.17
+    },
+    {
+      "episode_id": 10,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.9861,
+      "goal": [
+        -0.237287173048188,
+        0.49315380613382775,
+        0.49920531420687575
+      ],
+      "goal_quat": [
+        -0.16429797355088083,
+        0.6985822569605217,
+        0.2032658489662814,
+        -0.6660870819878085
+      ],
+      "deviation_from_handle_m": 0.15355429276388488,
+      "steps": 2240,
+      "diverged": false,
+      "travel_reached": 0.5,
+      "wall_s": 1.12
+    },
+    {
+      "episode_id": 11,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 1.47915,
+      "goal": [
+        -0.1564704792202434,
+        0.7135265944522898,
+        0.5233352652567841
+      ],
+      "goal_quat": [
+        -0.16429799516871438,
+        0.6985822362696913,
+        0.20326588015100908,
+        -0.6660870888392991
+      ],
+      "deviation_from_handle_m": 0.09601625739830028,
+      "steps": 2790,
+      "diverged": false,
+      "travel_reached": 0.75,
+      "wall_s": 1.67
+    },
+    {
+      "episode_id": 12,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.49305,
+      "goal": [
+        -0.5529129053953266,
+        0.24924600368435082,
+        0.34451553582578165
+      ],
+      "goal_quat": [
+        -0.16429798208014953,
+        0.6985822628628372,
+        0.20326584402061407,
+        -0.6660870752029452
+      ],
+      "deviation_from_handle_m": 0.20931007226961534,
+      "steps": 2550,
+      "diverged": false,
+      "travel_reached": 0.25,
+      "wall_s": 1.34
+    },
+    {
+      "episode_id": 13,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.9861,
+      "goal": [
+        -0.05732699213826592,
+        0.4870513646052071,
+        0.34056004122564965
+      ],
+      "goal_quat": [
+        -0.16429797355088083,
+        0.6985822569605217,
+        0.2032658489662814,
+        -0.6660870819878085
+      ],
+      "deviation_from_handle_m": 0.2526676296238969,
+      "steps": 2272,
+      "diverged": false,
+      "travel_reached": 0.5297961204561832,
+      "wall_s": 1.25
+    },
+    {
+      "episode_id": 14,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 1.47915,
+      "goal": [
+        -0.2144916531778577,
+        0.42680716570604016,
+        0.5831832417485387
+      ],
+      "goal_quat": [
+        -0.16429799516871438,
+        0.6985822362696913,
+        0.20326588015100908,
+        -0.6660870888392991
+      ],
+      "deviation_from_handle_m": 0.28483139121882,
+      "steps": 2074,
+      "diverged": false,
+      "travel_reached": 0.75,
+      "wall_s": 1.1
+    },
+    {
+      "episode_id": 15,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.9861,
+      "goal": [
+        -0.0154678127428238,
+        0.37100619333280116,
+        0.6042925529297848
+      ],
+      "goal_quat": [
+        -0.16429797355088083,
+        0.6985822569605217,
+        0.2032658489662814,
+        -0.6660870819878085
+      ],
+      "deviation_from_handle_m": 0.2817551324883422,
+      "steps": 2085,
+      "diverged": false,
+      "travel_reached": 0.5,
+      "wall_s": 1.17
+    },
+    {
+      "episode_id": 16,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.9861,
+      "goal": [
+        -0.06734956554682375,
+        0.5410290091171963,
+        0.45869087088254334
+      ],
+      "goal_quat": [
+        -0.16429797355088083,
+        0.6985822569605217,
+        0.2032658489662814,
+        -0.6660870819878085
+      ],
+      "deviation_from_handle_m": 0.26049120770620504,
+      "steps": 2315,
+      "diverged": false,
+      "travel_reached": 0.5447020620941736,
+      "wall_s": 1.26
+    },
+    {
+      "episode_id": 17,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.49305,
+      "goal": [
+        -0.5440534999407429,
+        0.31536714213303163,
+        0.37558893919487024
+      ],
+      "goal_quat": [
+        -0.16429798208014953,
+        0.6985822628628372,
+        0.20326584402061407,
+        -0.6660870752029452
+      ],
+      "deviation_from_handle_m": 0.24824942286632587,
+      "steps": 3087,
+      "diverged": false,
+      "travel_reached": 0.4064180599099213,
+      "wall_s": 1.74
+    },
+    {
+      "episode_id": 18,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 0.49305,
+      "goal": [
+        -0.42902288446150966,
+        0.278244617299492,
+        0.6270328115637787
+      ],
+      "goal_quat": [
+        -0.16429798208014953,
+        0.6985822628628372,
+        0.20326584402061407,
+        -0.6660870752029452
+      ],
+      "deviation_from_handle_m": 0.26079422903189736,
+      "steps": 3153,
+      "diverged": false,
+      "travel_reached": 0.3809664174867523,
+      "wall_s": 1.74
+    },
+    {
+      "episode_id": 19,
+      "object": "minifridge",
+      "object_id": 1,
+      "family": "door",
+      "start_hinge_angle": 1.47915,
+      "goal": [
+        0.003438902337958877,
+        0.6009174321577203,
+        0.2735012816938532
+      ],
+      "goal_quat": [
+        -0.16429799516871438,
+        0.6985822362696913,
+        0.20326588015100908,
+        -0.6660870888392991
+      ],
+      "deviation_from_handle_m": 0.2629292465387864,
+      "steps": 2393,
+      "diverged": false,
+      "travel_reached": 0.75,
+      "wall_s": 1.41
+    },
+    {
+      "episode_id": 20,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.0061280923296986416,
+        0.6686597811997526,
+        0.10821089785929655
+      ],
+      "goal_quat": [
+        0.00821881216957683,
+        0.008219082298076682,
+        0.7070578706018094,
+        0.7070601568697903
+      ],
+      "deviation_from_handle_m": 0.20997297299842974,
+      "steps": 1501,
+      "diverged": false,
+      "travel_reached": 0.00207443856509915,
+      "wall_s": 0.71
+    },
+    {
+      "episode_id": 21,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.77665,
+      "goal": [
+        -0.2331603517013852,
+        0.5643054690669321,
+        0.39715578873459306
+      ],
+      "goal_quat": [
+        0.008218806125381135,
+        0.00821909885778811,
+        0.7070578518808645,
+        0.7070601754684358
+      ],
+      "deviation_from_handle_m": 0.17475115487699375,
+      "steps": 2305,
+      "diverged": false,
+      "travel_reached": 0.635952906027891,
+      "wall_s": 1.24
+    },
+    {
+      "episode_id": 22,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.388325,
+      "goal": [
+        -0.2610207868019244,
+        0.5936540387267881,
+        0.38661203621032036
+      ],
+      "goal_quat": [
+        0.008218807074848435,
+        0.00821909662323442,
+        0.7070578436216968,
+        0.7070601837425151
+      ],
+      "deviation_from_handle_m": 0.26093786619668374,
+      "steps": 2242,
+      "diverged": false,
+      "travel_reached": 0.7180754272469834,
+      "wall_s": 1.33
+    },
+    {
+      "episode_id": 23,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        0.05060834141661217,
+        0.7149903248470049,
+        0.4693156709693109
+      ],
+      "goal_quat": [
+        0.00821881216957683,
+        0.008219082298076682,
+        0.7070578706018094,
+        0.7070601568697903
+      ],
+      "deviation_from_handle_m": 0.17561088502259134,
+      "steps": 2011,
+      "diverged": false,
+      "travel_reached": 0.16304562350556345,
+      "wall_s": 1.13
+    },
+    {
+      "episode_id": 24,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        -0.14271197951299075,
+        0.5920409438419694,
+        0.4395918047480925
+      ],
+      "goal_quat": [
+        0.00821881216957683,
+        0.008219082298076682,
+        0.7070578706018094,
+        0.7070601568697903
+      ],
+      "deviation_from_handle_m": 0.2644203496585642,
+      "steps": 2277,
+      "diverged": false,
+      "travel_reached": 0.45709525961491704,
+      "wall_s": 2.12
+    },
+    {
+      "episode_id": 25,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.77665,
+      "goal": [
+        -0.36714493376664104,
+        0.5599730101059045,
+        0.29180167149703223
+      ],
+      "goal_quat": [
+        0.008218806125381135,
+        0.00821909885778811,
+        0.7070578518808645,
+        0.7070601754684358
+      ],
+      "deviation_from_handle_m": 0.2747865959935046,
+      "steps": 2119,
+      "diverged": false,
+      "travel_reached": 0.8713751761081069,
+      "wall_s": 1.2
+    },
+    {
+      "episode_id": 26,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.388325,
+      "goal": [
+        0.11323513209283279,
+        0.5202283858024302,
+        0.2542562172168735
+      ],
+      "goal_quat": [
+        0.008218807074848435,
+        0.00821909662323442,
+        0.7070578436216968,
+        0.7070601837425151
+      ],
+      "deviation_from_handle_m": 0.17067244989071007,
+      "steps": 1970,
+      "diverged": false,
+      "travel_reached": 0.25,
+      "wall_s": 1.06
+    },
+    {
+      "episode_id": 27,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.0,
+      "goal": [
+        0.19442154845769372,
+        0.6006305958836746,
+        0.47981942466251293
+      ],
+      "goal_quat": [
+        0.00821881216957683,
+        0.008219082298076682,
+        0.7070578706018094,
+        0.7070601568697903
+      ],
+      "deviation_from_handle_m": 0.2928543530123993,
+      "steps": 1945,
+      "diverged": false,
+      "travel_reached": 0.22317043452309668,
+      "wall_s": 0.97
+    },
+    {
+      "episode_id": 28,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.388325,
+      "goal": [
+        0.06766976787995316,
+        0.6563810845153792,
+        0.1683910789741245
+      ],
+      "goal_quat": [
+        0.008218807074848435,
+        0.00821909662323442,
+        0.7070578436216968,
+        0.7070601837425151
+      ],
+      "deviation_from_handle_m": 0.16034072390700038,
+      "steps": 1808,
+      "diverged": false,
+      "travel_reached": 0.25,
+      "wall_s": 1.04
+    },
+    {
+      "episode_id": 29,
+      "object": "safe",
+      "object_id": 2,
+      "family": "door",
+      "start_hinge_angle": 0.388325,
+      "goal": [
+        -0.08083581173647786,
+        0.7040783780476266,
+        0.5584092130615581
+      ],
+      "goal_quat": [
+        0.008218807074848435,
+        0.00821909662323442,
+        0.7070578436216968,
+        0.7070601837425151
+      ],
+      "deviation_from_handle_m": 0.27851845043152773,
+      "steps": 2253,
+      "diverged": false,
+      "travel_reached": 0.327428974093551,
+      "wall_s": 1.28
+    }
+  ]
+}

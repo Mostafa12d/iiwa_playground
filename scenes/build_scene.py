@@ -258,12 +258,16 @@ SCENE = """<mujoco model="{name}_iiwa">
     <light pos="{light}" dir="0 0 -1" directional="true"/>
     <geom name="floor" type="plane" size="3 3 0.05" material="groundplane"/>
 
-    <!-- Arm standing off the handle along the lid's outward normal. -->
-    <body name="arm_mount" pos="{mount}">
+    <!-- The arm base sits at the world origin, unrotated, so the world frame IS
+         the robot base frame - every logged position, velocity and wrench is
+         already base-relative with no transform. The object carries the offset
+         instead: it is pushed back by the arm standoff along the lid's outward
+         normal, which puts the handle exactly where it was before. -->
+    <body name="arm_mount" pos="0 0 0">
       <attach model="iiwa" prefix=""/>
     </body>
 
-    <body name="object_mount" pos="0 0 0">
+    <body name="object_mount" pos="{object_pos}">
       <attach model="object" prefix="{prefix}"/>
     </body>
 
@@ -279,10 +283,18 @@ TAIL = """
            - (link7.xpos   + link7.xmat   @ relpose_pos)
          so anchor and relpose_pos must name the SAME physical point in their two
          body frames - the handle. -->
+    <!-- Compliant grasp, not a rigid one: a real hand on a handle gives a
+         little. The compliance lives in solref's time constant, NOT in solimp.
+         Lowering solimp's d_min/d_max makes the constraint permanently leaky
+         instead of springy - the arm then slides off the handle rather than
+         deflecting against it (measured on this scene at d=0.3: 66 mm of slip
+         and divergence at Kp=100). With d left at 0.99/0.999 the weld stays
+         enforced; tau=0.1 gives ~3-4 mm of give and is stable across Kp
+         50-1600. tau=0.2 gives ~12-17 mm, also stable; tau=0.4 diverges. -->
     <weld name="ee_to_handle" body1="link7" body2="{prefix}lid"
           anchor="{anchor}"
           relpose="{relpose}"
-          solref="0.002 1" solimp="0.99 0.999 0.001 0.5 2"/>
+          solref="0.1 1" solimp="0.99 0.999 0.001 0.5 2"/>
   </equality>
 
   <!-- qpos: joint1..7 then {prefix}lid_hinge. Lid closed, EE on the handle. -->
@@ -293,11 +305,16 @@ TAIL = """
 
 
 def render_scene(name, mount, cam_pos, cam_axes, target, tail="", **meta):
+    """`mount`, `cam_pos` and `target` are all in object-file coordinates.
+
+    They are shifted by -mount on the way out, which moves the arm base to the
+    origin and carries everything else with it.
+    """
     return SCENE.format(
         name=name, arm=ARM, prefix=PREFIX,
-        mount=" ".join(f"{v:.4f}" for v in mount),
-        light=" ".join(f"{v:.2f}" for v in (target + np.array([0, 0, 2.0]))),
-        cam_pos=" ".join(f"{v:.4f}" for v in cam_pos),
+        object_pos=" ".join(f"{v:.4f}" for v in -mount),
+        light=" ".join(f"{v:.2f}" for v in (target - mount + np.array([0, 0, 2.0]))),
+        cam_pos=" ".join(f"{v:.4f}" for v in (cam_pos - mount)),
         cam_axes=" ".join(f"{v:.4f}" for v in cam_axes),
         tail=tail, **meta,
     )

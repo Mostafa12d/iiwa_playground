@@ -35,19 +35,23 @@
   </asset>
 
   <worldbody>
-    <light pos="-0.03 -0.14 2.30" dir="0 0 -1" directional="true"/>
+    <light pos="0.02 0.75 2.30" dir="0 0 -1" directional="true"/>
     <geom name="floor" type="plane" size="3 3 0.05" material="groundplane"/>
 
-    <!-- Arm standing off the handle along the lid's outward normal. -->
-    <body name="arm_mount" pos="-0.0453 -0.8859 0.0000">
+    <!-- The arm base sits at the world origin, unrotated, so the world frame IS
+         the robot base frame - every logged position, velocity and wrench is
+         already base-relative with no transform. The object carries the offset
+         instead: it is pushed back by the arm standoff along the lid's outward
+         normal, which puts the handle exactly where it was before. -->
+    <body name="arm_mount" pos="0 0 0">
       <attach model="iiwa" prefix=""/>
     </body>
 
-    <body name="object_mount" pos="0 0 0">
+    <body name="object_mount" pos="0.0453 0.8859 -0.0000">
       <attach model="object" prefix="obj_"/>
     </body>
 
-    <camera name="scene_view" pos="0.6974 -1.8534 1.0004" xyaxes="0.9212 0.3891 -0.0000 -0.1368 0.3238 0.9362"/>
+    <camera name="scene_view" pos="0.7427 -0.9675 1.0004" xyaxes="0.9212 0.3891 -0.0000 -0.1368 0.3238 0.9362"/>
   </worldbody>
 
   <equality>
@@ -56,10 +60,18 @@
            - (link7.xpos   + link7.xmat   @ relpose_pos)
          so anchor and relpose_pos must name the SAME physical point in their two
          body frames - the handle. -->
+    <!-- Compliant grasp, not a rigid one: a real hand on a handle gives a
+         little. The compliance lives in solref's time constant, NOT in solimp.
+         Lowering solimp's d_min/d_max makes the constraint permanently leaky
+         instead of springy - the arm then slides off the handle rather than
+         deflecting against it (measured on this scene at d=0.3: 66 mm of slip
+         and divergence at Kp=100). With d left at 0.99/0.999 the weld stays
+         enforced; tau=0.1 gives ~3-4 mm of give and is stable across Kp
+         50-1600. tau=0.2 gives ~12-17 mm, also stable; tau=0.4 diverges. -->
     <weld name="ee_to_handle" body1="link7" body2="obj_lid"
           anchor="0.34361000 0.05622000 0.02154000"
           relpose="0.00000000 0.00000006 0.04500000 0.00000004 0.99993245 0.00000004 0.01162295"
-          solref="0.002 1" solimp="0.99 0.999 0.001 0.5 2"/>
+          solref="0.1 1" solimp="0.99 0.999 0.001 0.5 2"/>
   </equality>
 
   <!-- qpos: joint1..7 then obj_lid_hinge. Lid closed, EE on the handle. -->
