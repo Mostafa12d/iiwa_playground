@@ -5,6 +5,7 @@ import time
 from utils.dual_quat_traj import DualQuaternionTrajectory
 from utils.dx_plot import output_dir, plot_dx, plot_paths
 from utils.goal_sampler import sample_goal_poses
+from utils.impedance import CartesianImpedance
 from utils.traj_overlay import TrajectoryOverlay, hide_body_geoms
 
 # Cartesian impedance control gains.
@@ -62,12 +63,12 @@ def main() -> None:
 
     model.opt.timestep = dt
 
-    # Compute damping and stiffness matrices.
-    damping_pos = damping_ratio * 2 * np.sqrt(impedance_pos)
-    damping_ori = damping_ratio * 2 * np.sqrt(impedance_ori)
-    Kp = np.concatenate([impedance_pos, impedance_ori], axis=0)
-    Kd = np.concatenate([damping_pos, damping_ori], axis=0)
-    Kd_null = damping_ratio * 2 * np.sqrt(Kp_null)
+    ctrl = CartesianImpedance(
+        model, impedance_pos, impedance_ori, Kp_null,
+        damping_ratio=damping_ratio, kpos=Kpos, kori=Kori,
+        integration_dt=integration_dt,
+        gravity_compensation=gravity_compensation,
+    )
 
     # End-effector site we wish to control.
     site_name = "attachment_site"
@@ -85,8 +86,6 @@ def main() -> None:
         "joint6",
         "joint7",
     ]
-    dof_ids = np.array([model.joint(name).id for name in joint_names])
-    actuator_ids = np.array([model.actuator(name).id for name in joint_names])
 
     # Initial joint configuration saved as a keyframe in the XML file.
     key_name = "home"
@@ -99,14 +98,7 @@ def main() -> None:
     mocap_id = model.body(mocap_name).mocapid[0]
     hide_body_geoms(model, mocap_name)
 
-    # Pre-allocate numpy arrays.
-    jac = np.zeros((6, model.nv))
-    twist = np.zeros(6)
-    site_quat = np.zeros(4)
-    site_quat_conj = np.zeros(4)
-    error_quat = np.zeros(4)
-    M_inv = np.zeros((model.nv, model.nv))
-    Mx = np.zeros((6, 6))
+    ctrl.q0 = q0
 
     with mujoco.viewer.launch_passive(
         model=model,
@@ -168,49 +160,15 @@ def main() -> None:
                 data.mocap_pos[mocap_id] = pos
                 data.mocap_quat[mocap_id] = quat
 
-            site_pos = data.site(site_id).xpos.copy()
-
-            # Spatial velocity (aka twist).
-            dx = pos - site_pos
+            out = ctrl.compute(data, pos, quat)
+            site_pos, dx = out.ee_pos, out.dx
             log_t.append(t_sim)
             log_dx.append(dx.copy())
             log_cmd.append(pos.copy())
             log_actual.append(site_pos)
             log_segment.append(segment_index)
 
-            twist[:3] = Kpos * dx / integration_dt
-            mujoco.mju_mat2Quat(site_quat, data.site(site_id).xmat)
-            mujoco.mju_negQuat(site_quat_conj, site_quat)
-            mujoco.mju_mulQuat(error_quat, quat, site_quat_conj)
-            mujoco.mju_quat2Vel(twist[3:], error_quat, 1.0)
-            twist[3:] *= Kori / integration_dt
-
-            # Jacobian.
-            mujoco.mj_jacSite(model, data, jac[:3], jac[3:], site_id)
-
-            # Compute the task-space inertia matrix.
-            mujoco.mj_solveM(model, data, M_inv, np.eye(model.nv))
-            Mx_inv = jac @ M_inv @ jac.T
-            if abs(np.linalg.det(Mx_inv)) >= 1e-2:
-                Mx = np.linalg.inv(Mx_inv)
-            else:
-                Mx = np.linalg.pinv(Mx_inv, rcond=1e-2)
-
-            # Compute generalized forces.
-            tau = jac.T @ Mx @ (Kp * twist - Kd * (jac @ data.qvel[dof_ids]))
-
-            # Add joint task in nullspace.
-            Jbar = M_inv @ jac.T @ Mx
-            ddq = Kp_null * (q0 - data.qpos[dof_ids]) - Kd_null * data.qvel[dof_ids]
-            tau += (np.eye(model.nv) - jac.T @ Jbar.T) @ ddq
-
-            # Add gravity compensation.
-            if gravity_compensation:
-                tau += data.qfrc_bias[dof_ids]
-
-            # Set the control signal and step the simulation.
-            np.clip(tau, *model.actuator_ctrlrange.T, out=tau)
-            data.ctrl[actuator_ids] = tau[actuator_ids]
+            ctrl.apply(data, out)
             mujoco.mj_step(model, data)
 
             t_seg += dt

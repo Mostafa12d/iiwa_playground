@@ -23,6 +23,7 @@ from utils.dx_plot import (
 )
 from utils.frames import FrameTracker, quat_angle
 from utils.goal_sampler import sample_feasible_targets
+from utils.impedance import CartesianImpedance
 from utils.traj_overlay import TrajectoryOverlay
 
 # Cartesian impedance control gains.
@@ -79,11 +80,13 @@ def main(object_name=object_name) -> None:
     data = mujoco.MjData(model)
     model.opt.timestep = dt
 
-    damping_pos = damping_ratio * 2 * np.sqrt(impedance_pos)
-    damping_ori = damping_ratio * 2 * np.sqrt(impedance_ori)
-    Kp = np.concatenate([impedance_pos, impedance_ori], axis=0)
-    Kd = np.concatenate([damping_pos, damping_ori], axis=0)
-    Kd_null = damping_ratio * 2 * np.sqrt(Kp_null)
+    ctrl = CartesianImpedance(
+        model, impedance_pos, impedance_ori, Kp_null,
+        damping_ratio=damping_ratio, kpos=Kpos, kori=Kori,
+        integration_dt=integration_dt,
+        gravity_compensation=gravity_compensation,
+        track_orientation=track_orientation,
+    )
 
     site_id = model.site("attachment_site").id
 
@@ -91,9 +94,7 @@ def main(object_name=object_name) -> None:
     # but diverge the moment a scene gains a free joint, so resolve both.
     joint_names = [f"joint{i}" for i in range(1, 8)]
     joint_ids = np.array([model.joint(name).id for name in joint_names])
-    dof_ids = model.jnt_dofadr[joint_ids]
     qpos_ids = model.jnt_qposadr[joint_ids]
-    actuator_ids = np.array([model.actuator(name).id for name in joint_names])
 
     key_id = model.key("grasp").id
     q0 = model.key("grasp").qpos[qpos_ids]
@@ -103,12 +104,7 @@ def main(object_name=object_name) -> None:
     hinge_qadr = model.jnt_qposadr[hinge_id]
     hinge_limit = model.jnt_range[hinge_id, 1]
 
-    jac = np.zeros((6, model.nv))
-    twist = np.zeros(6)
-    site_quat = np.zeros(4)
-    site_quat_conj = np.zeros(4)
-    error_quat = np.zeros(4)
-    M_inv = np.zeros((model.nv, model.nv))
+    ctrl.q0 = q0
 
     with mujoco.viewer.launch_passive(
         model=model, data=data, show_left_ui=False, show_right_ui=False
@@ -170,20 +166,12 @@ def main(object_name=object_name) -> None:
         log_rel_pos, log_rel_ang, log_door, log_segment = [], [], [], []
         segment_marks = [(0.0, "goal 1")]
 
-        dtheta = np.zeros(3)
-
         while viewer.is_running() and not done:
             step_start = time.time()
 
             pos, quat = traj.sample(t_seg)
-            site_pos = data.site(site_id).xpos.copy()
-            dx = pos - site_pos
-
-            # Orientation error is computed either way so it is always logged.
-            mujoco.mju_mat2Quat(site_quat, data.site(site_id).xmat)
-            mujoco.mju_negQuat(site_quat_conj, site_quat)
-            mujoco.mju_mulQuat(error_quat, quat, site_quat_conj)
-            mujoco.mju_quat2Vel(dtheta, error_quat, 1.0)
+            out = ctrl.compute(data, pos, quat)
+            site_pos, dx, dtheta = out.ee_pos, out.dx, out.dtheta
 
             rel_pos, rel_quat = handle.relative(data)
             log_t.append(t_sim)
@@ -196,37 +184,10 @@ def main(object_name=object_name) -> None:
             log_door.append(float(data.qpos[hinge_qadr]))
             log_segment.append(segment_index)
 
-            twist[:3] = Kpos * dx / integration_dt
-            twist[3:] = dtheta * (Kori / integration_dt) if track_orientation else 0.0
-
-            mujoco.mj_jacSite(model, data, jac[:3], jac[3:], site_id)
-            ee_speed = np.linalg.norm(jac[:3] @ data.qvel)
+            ee_speed = np.linalg.norm(out.ee_twist[:3])
             below_time = below_time + dt if ee_speed < settle_vel else 0.0
-            mujoco.mj_solveM(model, data, M_inv, np.eye(model.nv))
-            Mx_inv = jac @ M_inv @ jac.T
-            if abs(np.linalg.det(Mx_inv)) >= 1e-2:
-                Mx = np.linalg.inv(Mx_inv)
-            else:
-                Mx = np.linalg.pinv(Mx_inv, rcond=1e-2)
 
-            tau_full = jac.T @ Mx @ (Kp * twist - Kd * (jac @ data.qvel))
-
-            # Joint task in the nullspace. Only the arm DOFs are actuated, so the
-            # joint-space term is written into the arm block alone; the hinge DOF
-            # rides along in the Jacobian but takes no command.
-            Jbar = M_inv @ jac.T @ Mx
-            ddq = np.zeros(model.nv)
-            ddq[dof_ids] = (
-                Kp_null * (q0 - data.qpos[qpos_ids]) - Kd_null * data.qvel[dof_ids]
-            )
-            tau_full += (np.eye(model.nv) - jac.T @ Jbar.T) @ ddq
-
-            tau = tau_full[dof_ids]
-            if gravity_compensation:
-                tau += data.qfrc_bias[dof_ids]
-
-            np.clip(tau, *model.actuator_ctrlrange.T, out=tau)
-            data.ctrl[actuator_ids] = tau
+            ctrl.apply(data, out)
             mujoco.mj_step(model, data)
 
             t_seg += dt

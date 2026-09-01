@@ -1,8 +1,8 @@
 {
   "frames": {
-    "world": "IDENTICAL to the robot base frame. Scenes are built with arm_mount at the origin, unrotated, so every position, velocity, Jacobian and wrench below is already base-relative. No transform is applied anywhere.",
-    "orientation": "quaternions are (w, x, y, z), MuJoCo convention",
-    "twist": "ee_twist and handle vel are [linear(3), angular(3)] in the base frame, from mj_jacSite / mj_objectVelocity"
+    "reference": "world == robot_base",
+    "quat": "wxyz",
+    "twist": "linear3_angular3"
   },
   "units": {
     "length": "m",
@@ -16,10 +16,9 @@
     "stiffness_ori": "Nm/rad"
   },
   "controller": {
-    "type": "Cartesian impedance + nullspace posture task",
+    "type": "cartesian_impedance_nullspace_posture",
     "Kp_pos": 50.0,
     "Kp_ori": 25.0,
-    "damping_ratio": 1.0,
     "Kp_null": [
       75.0,
       75.0,
@@ -29,22 +28,24 @@
       25.0,
       25.0
     ],
+    "damping_ratio": 1.0,
+    "kpos": 0.95,
+    "kori": 0.95,
+    "integration_dt": 1.0,
     "dt": 0.002,
-    "note": "Kp is LOW on purpose: stiction+damping at the handle is only 0.06-0.16 N on these objects, so stiffer gains make the arm insensitive to the object.",
-    "caveat": "the nullspace posture reference is the CLOSED-door keyframe, so it pulls the door shut and costs roughly 20-25% of achievable travel. Not yet fixed."
+    "posture_reference": "closed_door_keyframe"
   },
-  "namespaces": {
-    "obs/": "measurable on a real robot",
-    "gt/": "privileged. analysis only, never a model input",
-    "flag_": "validity flags"
+  "episode": {
+    "segment_duration": 3.0,
+    "settle_vel": 0.005,
+    "settle_window": 1.0,
+    "max_phase_time": 12.0,
+    "near_limit_frac": 0.05,
+    "jump_sigma": 8.0
   },
-  "known_limitations": [
-    "Goals come from a free-space IK survey, so most are off the weld constraint manifold; the door typically parks well short of its limit. Travel coverage is partial.",
-    "No mechanics randomization yet: every object has damping=0.08, frictionloss=0.03, stiffness=0. The impedance gain is therefore only weakly identifiable from this dataset.",
-    "No sensor-noise / delay variant. All signals are idealized.",
-    "weld_wrench_ee is recovered as pinv(J_arm^T) @ qfrc_constraint[arm], i.e. the wrench at the EE consistent with the arm-side constraint force. Raw efc_force/efc_pos and qfrc_constraint_all are logged so it can be re-derived differently offline.",
-    "A goal surveyed at one hinge angle may be run from a different start angle in principle; here start angle is taken from the survey row, so they match."
-  ],
+  "derived": {
+    "weld_wrench_ee": "pinv(J_arm.T) @ qfrc_constraint[arm]"
+  },
   "objects": {
     "kitchen-cabinet": {
       "lid_mass": 1.6,
@@ -192,7 +193,7 @@
       "steps": 2895,
       "diverged": false,
       "travel_reached": 0.75,
-      "wall_s": 1.7
+      "wall_s": 1.88
     },
     {
       "episode_id": 1,
@@ -215,7 +216,7 @@
       "steps": 2354,
       "diverged": false,
       "travel_reached": 0.30687521308787646,
-      "wall_s": 1.41
+      "wall_s": 1.36
     },
     {
       "episode_id": 2,
@@ -238,7 +239,7 @@
       "steps": 2103,
       "diverged": false,
       "travel_reached": 0.40733079693039986,
-      "wall_s": 1.72
+      "wall_s": 1.08
     },
     {
       "episode_id": 3,
@@ -261,7 +262,7 @@
       "steps": 1909,
       "diverged": false,
       "travel_reached": 0.08416390821264773,
-      "wall_s": 1.12
+      "wall_s": 0.88
     },
     {
       "episode_id": 4,
@@ -307,7 +308,7 @@
       "steps": 1918,
       "diverged": false,
       "travel_reached": 0.0652840284493639,
-      "wall_s": 0.97
+      "wall_s": 0.89
     },
     {
       "episode_id": 6,
@@ -330,7 +331,7 @@
       "steps": 1867,
       "diverged": false,
       "travel_reached": 0.03527235987110356,
-      "wall_s": 0.89
+      "wall_s": 0.87
     },
     {
       "episode_id": 7,
@@ -353,7 +354,7 @@
       "steps": 1902,
       "diverged": false,
       "travel_reached": 0.05999020215245202,
-      "wall_s": 0.93
+      "wall_s": 0.88
     },
     {
       "episode_id": 8,
@@ -376,7 +377,7 @@
       "steps": 3164,
       "diverged": false,
       "travel_reached": 0.3420619919869845,
-      "wall_s": 1.56
+      "wall_s": 1.41
     },
     {
       "episode_id": 9,
@@ -399,7 +400,7 @@
       "steps": 1974,
       "diverged": false,
       "travel_reached": 0.5,
-      "wall_s": 1.17
+      "wall_s": 1.01
     },
     {
       "episode_id": 10,
@@ -422,7 +423,7 @@
       "steps": 2240,
       "diverged": false,
       "travel_reached": 0.5,
-      "wall_s": 1.12
+      "wall_s": 1.27
     },
     {
       "episode_id": 11,
@@ -445,7 +446,7 @@
       "steps": 2790,
       "diverged": false,
       "travel_reached": 0.75,
-      "wall_s": 1.67
+      "wall_s": 1.6
     },
     {
       "episode_id": 12,
@@ -491,7 +492,7 @@
       "steps": 2272,
       "diverged": false,
       "travel_reached": 0.5297961204561832,
-      "wall_s": 1.25
+      "wall_s": 1.31
     },
     {
       "episode_id": 14,
@@ -514,7 +515,7 @@
       "steps": 2074,
       "diverged": false,
       "travel_reached": 0.75,
-      "wall_s": 1.1
+      "wall_s": 1.09
     },
     {
       "episode_id": 15,
@@ -537,7 +538,7 @@
       "steps": 2085,
       "diverged": false,
       "travel_reached": 0.5,
-      "wall_s": 1.17
+      "wall_s": 1.0
     },
     {
       "episode_id": 16,
@@ -560,7 +561,7 @@
       "steps": 2315,
       "diverged": false,
       "travel_reached": 0.5447020620941736,
-      "wall_s": 1.26
+      "wall_s": 1.52
     },
     {
       "episode_id": 17,
@@ -583,7 +584,7 @@
       "steps": 3087,
       "diverged": false,
       "travel_reached": 0.4064180599099213,
-      "wall_s": 1.74
+      "wall_s": 1.73
     },
     {
       "episode_id": 18,
@@ -606,7 +607,7 @@
       "steps": 3153,
       "diverged": false,
       "travel_reached": 0.3809664174867523,
-      "wall_s": 1.74
+      "wall_s": 1.77
     },
     {
       "episode_id": 19,
@@ -675,7 +676,7 @@
       "steps": 2305,
       "diverged": false,
       "travel_reached": 0.635952906027891,
-      "wall_s": 1.24
+      "wall_s": 1.25
     },
     {
       "episode_id": 22,
@@ -698,7 +699,7 @@
       "steps": 2242,
       "diverged": false,
       "travel_reached": 0.7180754272469834,
-      "wall_s": 1.33
+      "wall_s": 1.3
     },
     {
       "episode_id": 23,
@@ -721,7 +722,7 @@
       "steps": 2011,
       "diverged": false,
       "travel_reached": 0.16304562350556345,
-      "wall_s": 1.13
+      "wall_s": 0.91
     },
     {
       "episode_id": 24,
@@ -744,7 +745,7 @@
       "steps": 2277,
       "diverged": false,
       "travel_reached": 0.45709525961491704,
-      "wall_s": 2.12
+      "wall_s": 1.06
     },
     {
       "episode_id": 25,
@@ -767,7 +768,7 @@
       "steps": 2119,
       "diverged": false,
       "travel_reached": 0.8713751761081069,
-      "wall_s": 1.2
+      "wall_s": 1.26
     },
     {
       "episode_id": 26,
@@ -790,7 +791,7 @@
       "steps": 1970,
       "diverged": false,
       "travel_reached": 0.25,
-      "wall_s": 1.06
+      "wall_s": 1.43
     },
     {
       "episode_id": 27,
@@ -836,7 +837,7 @@
       "steps": 1808,
       "diverged": false,
       "travel_reached": 0.25,
-      "wall_s": 1.04
+      "wall_s": 1.09
     },
     {
       "episode_id": 29,
@@ -859,7 +860,7 @@
       "steps": 2253,
       "diverged": false,
       "travel_reached": 0.327428974093551,
-      "wall_s": 1.28
+      "wall_s": 1.35
     }
   ]
 }

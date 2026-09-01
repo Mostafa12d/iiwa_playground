@@ -4,16 +4,10 @@
     python3.10 collect.py --objects safe -n 5
 
 Writes datasets/<tag>.npz (one row per timestep, all episodes concatenated) and
-datasets/<tag>_schema.json (units, frames, field meanings).
+datasets/<tag>_schema.json (units, frames, controller and episode settings).
 
-Fields are namespaced:
-  obs/   what a real robot could measure
-  gt/    privileged ground truth - analysis only, never a model input
-  meta/  bookkeeping and labels
-  flag/  validity flags
-
-NOTE: the impedance control law here is duplicated from articulation_controller.py
-rather than imported, since that file is a script. Keep them in sync by hand.
+gt/<object>/* is privileged ground truth: analysis only, never a model input.
+flag_* are validity flags.
 """
 
 import argparse
@@ -26,6 +20,7 @@ import numpy as np
 
 from utils.dual_quat_traj import DualQuaternionTrajectory
 from utils.dx_plot import output_dir
+from utils.impedance import CartesianImpedance
 
 PREFIX = "obj_"
 OBJECTS = ("kitchen-cabinet", "minifridge", "safe")
@@ -100,12 +95,6 @@ def run_episode(model, data, goal_pos, goal_quat, start_theta, rng):
     mujoco.mj_resetDataKeyframe(model, data, model.key("grasp").id)
     data.qpos[hq] = start_theta
     mujoco.mj_forward(model, data)
-    q0 = data.qpos[qpos_ids].copy()
-
-    Kp = np.concatenate([np.full(3, KP_POS), np.full(3, KP_ORI)])
-    Kd = DAMPING_RATIO * 2 * np.sqrt(Kp)
-    Kd_null = DAMPING_RATIO * 2 * np.sqrt(KP_NULL)
-
     sq = np.zeros(4)
     mujoco.mju_mat2Quat(sq, data.site(site_id).xmat)
     traj = DualQuaternionTrajectory(
@@ -113,11 +102,11 @@ def run_episode(model, data, goal_pos, goal_quat, start_theta, rng):
         pos_goal=goal_pos, quat_goal=goal_quat, duration=SEGMENT_DURATION,
     )
 
-    jac = np.zeros((6, model.nv))
-    twist = np.zeros(6)
-    a, b, c = np.zeros(4), np.zeros(4), np.zeros(4)
-    dth = np.zeros(3)
-    M_inv = np.zeros((model.nv, model.nv))
+    ctrl = CartesianImpedance(
+        model, KP_POS, KP_ORI, KP_NULL, damping_ratio=DAMPING_RATIO,
+        kpos=KPOS, kori=KORI, integration_dt=INTEGRATION_DT,
+    )
+    ctrl.capture_posture(data)
     obj_vel = np.zeros(6)
 
     rec = {k: [] for k in (
@@ -136,35 +125,11 @@ def run_episode(model, data, goal_pos, goal_quat, start_theta, rng):
     below, t_seg, blew = 0.0, 0.0, False
     while t_seg < MAX_PHASE_TIME:
         pos, quat = traj.sample(t_seg)
-        ee_pos = data.site(site_id).xpos.copy()
-        dx = pos - ee_pos
-        mujoco.mju_mat2Quat(a, data.site(site_id).xmat)
-        mujoco.mju_negQuat(b, a)
-        mujoco.mju_mulQuat(c, quat, b)
-        mujoco.mju_quat2Vel(dth, c, 1.0)
-
-        twist[:3] = KPOS * dx / INTEGRATION_DT
-        twist[3:] = dth * (KORI / INTEGRATION_DT)
-
-        mujoco.mj_jacSite(model, data, jac[:3], jac[3:], site_id)
-        ee_twist = jac @ data.qvel
-        mujoco.mj_solveM(model, data, M_inv, np.eye(model.nv))
-        Mxi = jac @ M_inv @ jac.T
-        Mx = (np.linalg.inv(Mxi) if abs(np.linalg.det(Mxi)) >= 1e-2
-              else np.linalg.pinv(Mxi, rcond=1e-2))
-
-        tau_full = jac.T @ Mx @ (Kp * twist - Kd * ee_twist)
-        Jbar = M_inv @ jac.T @ Mx
-        ddq = np.zeros(model.nv)
-        ddq[dof_ids] = (KP_NULL * (q0 - data.qpos[qpos_ids])
-                        - Kd_null * data.qvel[dof_ids])
-        tau_full += (np.eye(model.nv) - jac.T @ Jbar.T) @ ddq
-
-        tau = tau_full[dof_ids] + data.qfrc_bias[dof_ids]
-        pre = tau.copy()
-        np.clip(tau, *model.actuator_ctrlrange.T, out=tau)
-        saturated = bool(np.any(np.abs(pre - tau) > 1e-9))
-        data.ctrl[act_ids] = tau
+        out = ctrl.compute(data, pos, quat)
+        ee_pos, dx, dth = out.ee_pos, out.dx, out.dtheta
+        ee_twist, jac, tau = out.ee_twist, out.jac, out.tau
+        saturated = out.saturated
+        ctrl.apply(data, out)
 
         # --- log before stepping, so state and action line up -------------
         eq_rows = np.flatnonzero(
@@ -182,8 +147,6 @@ def run_episode(model, data, goal_pos, goal_quat, start_theta, rng):
 
         hquat = np.zeros(4)
         mujoco.mju_mat2Quat(hquat, data.site(handle_id).xmat)
-        equat = np.zeros(4)
-        mujoco.mju_mat2Quat(equat, data.site(site_id).xmat)
 
         theta = float(data.qpos[hq])
         travel = (theta - lo) / (hi - lo)
@@ -216,7 +179,7 @@ def run_episode(model, data, goal_pos, goal_quat, start_theta, rng):
         rec["arm_tau_cmd"].append(tau.copy())
         rec["arm_tau_actuator"].append(data.qfrc_actuator[dof_ids].copy())
         rec["ee_pos"].append(ee_pos)
-        rec["ee_quat"].append(equat)
+        rec["ee_quat"].append(out.ee_quat)
         rec["ee_twist"].append(ee_twist.copy())
         rec["cmd_pos"].append(pos.copy())
         rec["cmd_quat"].append(quat.copy())
@@ -353,13 +316,9 @@ def collect(objects, n_episodes, seed, tag):
 def schema(objects, episodes, gts):
     return {
         "frames": {
-            "world": "IDENTICAL to the robot base frame. Scenes are built with "
-                     "arm_mount at the origin, unrotated, so every position, "
-                     "velocity, Jacobian and wrench below is already "
-                     "base-relative. No transform is applied anywhere.",
-            "orientation": "quaternions are (w, x, y, z), MuJoCo convention",
-            "twist": "ee_twist and handle vel are [linear(3), angular(3)] in "
-                     "the base frame, from mj_jacSite / mj_objectVelocity",
+            "reference": "world == robot_base",
+            "quat": "wxyz",
+            "twist": "linear3_angular3",
         },
         "units": {
             "length": "m", "angle": "rad", "time": "s", "force": "N",
@@ -367,38 +326,20 @@ def schema(objects, episodes, gts):
             "stiffness_pos": "N/m", "stiffness_ori": "Nm/rad",
         },
         "controller": {
-            "type": "Cartesian impedance + nullspace posture task",
-            "Kp_pos": KP_POS, "Kp_ori": KP_ORI,
-            "damping_ratio": DAMPING_RATIO, "Kp_null": KP_NULL.tolist(),
-            "dt": DT,
-            "note": "Kp is LOW on purpose: stiction+damping at the handle is "
-                    "only 0.06-0.16 N on these objects, so stiffer gains make "
-                    "the arm insensitive to the object.",
-            "caveat": "the nullspace posture reference is the CLOSED-door "
-                      "keyframe, so it pulls the door shut and costs roughly "
-                      "20-25% of achievable travel. Not yet fixed.",
+            "type": "cartesian_impedance_nullspace_posture",
+            "Kp_pos": KP_POS, "Kp_ori": KP_ORI, "Kp_null": KP_NULL.tolist(),
+            "damping_ratio": DAMPING_RATIO, "kpos": KPOS, "kori": KORI,
+            "integration_dt": INTEGRATION_DT, "dt": DT,
+            "posture_reference": "closed_door_keyframe",
         },
-        "namespaces": {
-            "obs/": "measurable on a real robot",
-            "gt/": "privileged. analysis only, never a model input",
-            "flag_": "validity flags",
+        "episode": {
+            "segment_duration": SEGMENT_DURATION, "settle_vel": SETTLE_VEL,
+            "settle_window": SETTLE_WINDOW, "max_phase_time": MAX_PHASE_TIME,
+            "near_limit_frac": NEAR_LIMIT_FRAC, "jump_sigma": JUMP_SIGMA,
         },
-        "known_limitations": [
-            "Goals come from a free-space IK survey, so most are off the weld "
-            "constraint manifold; the door typically parks well short of its "
-            "limit. Travel coverage is partial.",
-            "No mechanics randomization yet: every object has "
-            "damping=0.08, frictionloss=0.03, stiffness=0. The impedance gain "
-            "is therefore only weakly identifiable from this dataset.",
-            "No sensor-noise / delay variant. All signals are idealized.",
-            "weld_wrench_ee is recovered as pinv(J_arm^T) @ qfrc_constraint[arm], "
-            "i.e. the wrench at the EE consistent with the arm-side constraint "
-            "force. Raw efc_force/efc_pos and qfrc_constraint_all are logged "
-            "so it can be re-derived differently offline.",
-            "A goal surveyed at one hinge angle may be run from a different "
-            "start angle in principle; here start angle is taken from the "
-            "survey row, so they match.",
-        ],
+        "derived": {
+            "weld_wrench_ee": "pinv(J_arm.T) @ qfrc_constraint[arm]",
+        },
         "objects": {n: {k: (v.tolist() if isinstance(v, np.ndarray) else v)
                         for k, v in g.items()} for n, g in gts.items()},
         "episodes": episodes,
